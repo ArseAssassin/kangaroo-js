@@ -9,6 +9,12 @@ define(function (){
 	{
 		return new Services();
 	}
+	
+	function DataError(msg)
+	{
+		this.message = msg
+	}
+	DataError.prototype = Error.prototype
 
 	var kangaroo = (function() {
 		var PageMap = function(data)
@@ -60,8 +66,10 @@ define(function (){
 			this.name = name
 			this.matches = matches
 
-			this.getTemplate = function()
+			this.getTemplateOrNull = function()
 			{
+				if (!this.data.template)
+					return null
 				return this.templatePath(this.data.template)
 			}
 
@@ -77,17 +85,19 @@ define(function (){
 				return s;
 			}
 
-			this.getDirectives = function()
+			this.getDirectivesOrNull = function()
 			{
+				if (!this.data.directives)
+					return null
 				return this.data.directives;
 			}
 
-			this.getData = function()
+			this.getDataOrNull = function()
 			{
-				if (this.data.data)
-					return this.templatePath(this.data.data)
+				if (!this.data.data)
+					return null
 				else
-					return "";
+					return this.templatePath(this.data.data);
 			}
 
 			this.getName = function()
@@ -198,9 +208,19 @@ define(function (){
 					var module = modules[i]
 
 					block = this.getBlock(module.getName())
-
+					
+					var data = module.getDataOrNull();
+					var template = module.getTemplateOrNull();
+					var directives = module.getDirectivesOrNull();
+					if (!data)
+						data = block.getDefaultData()
+					if (!template)
+						template = block.getDefaultTemplate()
+					if (!directives)
+						directives = block.getDefaultDirectives()
+					
 					block.refresh(new Context(
-						module.getData(), module.getTemplate(), module.getDirectives()
+						data, template, directives
 					))
 				}
 
