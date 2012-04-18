@@ -7,7 +7,9 @@ define(function (){
 
 	function getServices()
 	{
-		return new Services();
+		if (!services)
+			throw new Error("Services unavailable");
+		return services;
 	}
 	
 	function DataError(msg)
@@ -363,12 +365,6 @@ define(function (){
 				}
 
 				this.setRoot(t)
-
-				// $("a", this.root).each(function() {
-				// 	$(this).click(function(event) {
-				// 		event.preventDefault()
-				// 	})
-				// })
 			}
 
 			this.getTemplate = function()
@@ -547,7 +543,12 @@ define(function (){
 		{
 			json = this.sanitizeJSON(json)
 
-			return $.parseJSON(json)
+			try{
+				return $.parseJSON(json)
+			} catch (e)
+			{
+				throw new Error("Error parsing JSON: " + json)
+			}
 		}
 
 		this.loadTemplate = function(name, callback)
