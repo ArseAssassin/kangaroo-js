@@ -365,6 +365,8 @@ define(function (){
 				}
 
 				this.setRoot(t)
+				
+				getServices().initJS(t)
 			}
 
 			this.getTemplate = function()
@@ -530,6 +532,11 @@ define(function (){
 					throw new AJAXError(jqXHR)
 				}
 			})
+		}
+		
+		this.initJS = function(element)
+		{
+			
 		}
 
 		this.sanitizeJSON = function(json)
