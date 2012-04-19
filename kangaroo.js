@@ -19,6 +19,13 @@ define(function (){
 	DataError.prototype = Error.prototype
 
 	var kangaroo = (function() {
+		var FileNotFound = function(message, url)
+		{
+			this.message = message
+			this.url = url
+		}
+		FileNotFound.prototype = Error.prototype
+		
 		var PageMap = function(data)
 		{
 			this.data = data
@@ -35,7 +42,7 @@ define(function (){
 					}	
 				}
 
-				throw new Error("Invalid page name " + name)
+				throw new FileNotFound("Invalid page name " + name, path)
 			}
 		}
 
@@ -143,15 +150,15 @@ define(function (){
 				{
 					var module = this.blocks[i]
 
-					if (!module.object.isActive())
-						module.object.initDefault()
+					// if (!module.object.isActive())
+					// 	module.object.initDefault()
 				}
 			}
 
 			this.loadPageMap = function(callback)
 			{
 				var self = this
-				getServices().loadAjax("sitemap.json", function(value) {
+				getServices().loadAjax("/static/sitemap.json", function(value) {
 					callback(new PageMap(getServices().parseJSON(value)))
 				})
 			}
@@ -190,8 +197,17 @@ define(function (){
 
 			this.addPage = function(name)
 			{
-				var page = this.pageMap.getPage(name)
-				this.history.push(page)
+				try {
+					var page = this.pageMap.getPage(name)
+
+					this.history.push(page)
+				} catch(e)
+				{
+					if (e.url)
+						getServices().handle404(e, this)
+					else
+						throw e;
+				}
 			}
 
 			this.getCurrentPage = function()
@@ -202,7 +218,18 @@ define(function (){
 			this.renderCurrent = function()
 			{
 				var page = this.getCurrentPage()
-
+				
+				this.renderPage(page)
+			}
+			
+			this.renderPage = function(page, contextFactory)
+			{
+				if (!contextFactory)
+					function contextFactory(data, template, directives)
+					{
+						return new Context(data, template, directives);
+					}
+					
 				var modules = page.getModules()
 
 				for (var i in modules)
@@ -210,7 +237,7 @@ define(function (){
 					var module = modules[i]
 
 					block = this.getBlock(module.getName())
-					
+
 					var data = module.getDataOrNull();
 					var template = module.getTemplateOrNull();
 					var directives = module.getDirectivesOrNull();
@@ -220,13 +247,31 @@ define(function (){
 						template = block.getDefaultTemplate()
 					if (!directives)
 						directives = block.getDefaultDirectives()
+						
 					
-					block.refresh(new Context(
-						data, template, directives
-					))
+					this.refreshBlock(block, contextFactory(data, template, directives))
 				}
+			}
+			
+			this.refreshBlock = function(block, context)
+			{
+				var self = this;
+				
+				
+				context.loadData(function(data, template, directives, errors) {
+					if (errors.length)
+					{
+						getServices().handle500(errors, self);
+					}
+					else
+					{
+						block.setData(data)
+						block.setTemplate(template)
+						block.setDirectives(directives)
 
-
+						block.render()
+					}
+				})
 			}
 		}
 
@@ -253,7 +298,15 @@ define(function (){
 			this.dataName = data
 			this.templateName = template
 			this.directives = directives
-
+			
+			this.loadData = function(callback)
+			{
+				var context = getServices().getLoader()
+				
+				context.load(this.dataName, this.templateName, this.directives, callback);
+				
+			}
+			
 			this.getDataURL = function()
 			{
 				return this.dataName;
@@ -266,15 +319,13 @@ define(function (){
 
 			this.getDirectiveURL = function()
 			{
-				return this.directives ? this.directives : "";
+				return this.directives;
 			}
 		}
 		
 		var Module = function(root)
 		{
 			this.root = root;
-
-			this.loader = getServices().getLoader();
 
 			this.inited = false
 
@@ -340,28 +391,17 @@ define(function (){
 				return $(this.getRoot()).attr("data-initial-directives")
 			}
 
-			this.initDefault = function()
-			{
-				this.refresh(
-					new Context(
-						this.getDefaultData(),
-						this.getDefaultTemplate(),
-						this.getDefaultDirectives()
-					)
-				)
-			}
-
 			this.render = function()
 			{
 				var self = this;
 
 				$(this.getRoot()).html(this.getTemplate())
+				
 				if (!this.hasDirectives())
 					var t = $(this.getRoot()).autoRender(this.getData())
 				else
 				{
 					var t = $(this.getRoot()).render(this.getData(), this.getDirectives())
-
 				}
 
 				this.setRoot(t)
@@ -371,7 +411,7 @@ define(function (){
 
 			this.getTemplate = function()
 			{
-				if (!this.template)
+				if (this.template == null)
 					throw new Error("No template loaded")
 
 				return this.template;
@@ -394,26 +434,6 @@ define(function (){
 			{
 				this.data = value;
 			}
-
-			this.refresh = function(link)
-			{
-				var self = this;
-
-				self.inited = true
-
-				this.loader.load(
-					link.getDataURL(),
-					link.getTemplateURL(),
-					link.getDirectiveURL(),
-					function(data, template, directives) {
-						self.setData(data)
-						self.setTemplate(template)
-						self.setDirectives(directives)
-
-						self.render()
-					}
-				)
-			}
 		}
 
 		return function(serviceProvider) { // used to inject external services into the scope
@@ -433,20 +453,25 @@ define(function (){
 
 		this.load = function(dataURL, templateURL, directiveURL, callback)
 		{
-			var locks = [
-				"anonymous"
-			]
+			var locks = []
 
 			var template;
 			var data = {};
 			var directives = {};
+			var errors = []
 
+			function handleError(e)
+			{
+				errors.push(getServices().parseJSON(e.responseText))
+				locks.pop()
+				complete()
+			}
 
 			function complete()
 			{
 				if (locks.length == 0)
 				{
-					callback(data, template, directives)
+					callback(data, template, directives, errors)
 				}
 			}
 
@@ -457,17 +482,18 @@ define(function (){
 					data = value
 					locks.pop()
 					complete()
-				})
+				}, handleError)
 
 
 			}
 
+			locks.push("anonymous")
 			this.loadTemplate(templateURL, function(value) {
 				template = value
 
 				locks.pop()
 				complete()
-			})
+			}, handleError)
 
 			if (directiveURL)
 			{
@@ -477,33 +503,57 @@ define(function (){
 
 					locks.pop()
 					complete()
-				})
+				}, handleError)
 			}
 		}
 
-		this.loadTemplate = function(name, callback)
+		this.loadTemplate = function(name, callback, error)
 		{
 			getServices().loadAjax(this.templateEndpoint + name + ".html", function(value) {
 				callback(value)
-			})
+			}, error)
 		}
 
-		this.loadData = function(name, callback)
+		this.loadData = function(name, callback, error)
 		{
 			var self = this
-			getServices().loadAjax(this.dataEndpoint + name + ".json", function(value) {
+			getServices().loadAjax(this.getDataUrl(name), function(value) {
 				callback(getServices().parseJSON(value))
-			})
+			}, error)
 		}
 
-		this.loadDirective = function(name, callback)
+		this.getDataUrl = function(name) 
+		{
+			return this.dataEndpoint + name + ".json";
+		}
+
+		this.loadDirective = function(name, callback, error)
 		{
 			var self = this
 			getServices().loadAjax(this.directiveEndpoint + name + ".json", function(value) {
 				callback(getServices().parseJSON(value))
-			})
+			}, error)
 		}
 	}
+	
+	var ErrorContext = function(errors, template, directives)
+	{
+		this.errors = errors;
+		this.template = template;
+		this.directives = directives;
+		
+		this.loadData = function(callback)
+		{
+			var context = getServices().getLoader()
+			var self = this
+			
+			context.load("", this.template, this.directives, 
+				function(data, template, directives, errors) {
+					callback(self.errors, template, directives, errors)
+				})
+		}
+	}
+	
 	
 	var Services = function(base)
 	{
@@ -512,14 +562,31 @@ define(function (){
 
 		this.base = base
 
+		
 		var AJAXError = function(jqXHR)
 		{
 			this.jqXHR = jqXHR;
 		}
 		AJAXError.prototype = Error.prototype
 
-		this.loadAjax = function(url, callback)
+		this.handle404 = function(e, core)
 		{
+			core.history.push(core.pageMap.getPage("/404"))
+		}
+		
+		this.handle500 = function(e, core)
+		{
+			core.renderPage(core.pageMap.getPage("/500"), function(dataName, templateName, directiveName) {
+				return new ErrorContext({
+					"errors": e
+				}, templateName, directiveName)
+			})
+		}
+
+		this.loadAjax = function(url, callback, error)
+		{
+			var self = this;
+			
 			$.ajax({
 				url: url,
 				dataType:"text",
@@ -527,10 +594,7 @@ define(function (){
 				{
 					callback(data);
 				},
-				error: function(jqXHR, textStatus, errorThrown)
-				{
-					throw new AJAXError(jqXHR)
-				}
+				error: error
 			})
 		}
 		
