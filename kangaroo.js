@@ -462,7 +462,17 @@ define(function (){
 
 			function handleError(e)
 			{
-				errors.push(getServices().parseJSON(e.responseText))
+				try {
+					errors.push(getServices().parseJSON(e.responseText))
+				} catch(e)
+				{
+					if (e.json)
+						errors.push({
+							"message": "Error parsing JSON"
+						})
+					else
+						throw e
+				}
 				locks.pop()
 				complete()
 			}
@@ -518,7 +528,15 @@ define(function (){
 		{
 			var self = this
 			getServices().loadAjax(this.getDataUrl(name), function(value) {
-				callback(getServices().parseJSON(value))
+				try {
+					callback(getServices().parseJSON(value))
+				} catch (e)
+				{
+					if (e.json)
+						error({"message" : "Can\'t parse JSON response"})
+					else
+						throw e
+				}
 			}, error)
 		}
 
@@ -531,7 +549,15 @@ define(function (){
 		{
 			var self = this
 			getServices().loadAjax(this.directiveEndpoint + name + ".json", function(value) {
-				callback(getServices().parseJSON(value))
+				try{
+					callback(getServices().parseJSON(value))
+				} catch (e)
+				{
+					if (e.json)
+						error({"message": "Can\'t parse JSON response"})
+					else
+						throw e
+				}
 			}, error)
 		}
 	}
@@ -618,7 +644,7 @@ define(function (){
 				return $.parseJSON(json)
 			} catch (e)
 			{
-				throw new Error("Error parsing JSON: " + json)
+				throw new ParsingError("Error parsing JSON", json)
 			}
 		}
 
@@ -631,6 +657,13 @@ define(function (){
 			return new LoaderContext("content/data/", "content/template/", "content/directives/");
 		}
 	}
+	
+	function ParsingError(message, json)
+	{
+		this.message = message
+		this.json = json
+	}
+	ParsingError.prototype = Error.prototype
 	
 	return { 
 		Kangaroo: kangaroo,
