@@ -159,7 +159,8 @@ define(function (){
 			{
 				var self = this
 				getServices().loadAjax("/static/sitemap.json", function(value) {
-					callback(new PageMap(getServices().parseJSON(value)))
+					var pa = new PageMap(getServices().parseJSON(value))
+					callback(pa)
 				})
 			}
 
@@ -212,7 +213,10 @@ define(function (){
 
 			this.getCurrentPage = function()
 			{
-				return this.history[this.history.length-1]
+				if (!this.history.length)
+					return this.pageMap.getPage("/404")
+				else
+					return this.history[this.history.length-1]
 			}
 
 			this.renderCurrent = function()
@@ -597,7 +601,8 @@ define(function (){
 
 		this.handle404 = function(e, core)
 		{
-			core.history.push(core.pageMap.getPage("/404"))
+			var page = core.pageMap.getPage("/404")
+			core.history.push(page)
 		}
 		
 		this.handle500 = function(e, core)
