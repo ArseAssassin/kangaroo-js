@@ -1,15 +1,21 @@
-class Node
-	constructor: (@url, @template, @data, @directives) ->
-		
-	append: (other) -> (new Node @url + other.url, 
-		other.template or if other.template != null then @template, 
-		other.data or if other.data != null then  @data, 
-		other.directives or if other.directives != null then  @directives)
-	
-	
 class BaseNode
-	constructor: () ->
-	append: (other) -> other
+	constructor: (@children=[]) ->
+	append: (other) -> new Node other.url, @children
+	
+	addChild: (child) -> @children.push child
+	
+	
+class Node extends BaseNode
+	constructor: (@url, @children=[]) ->
+		
+	append: (other) -> (new Node @url + other.url, @children.concat other.children)
+		
+	addChild: (child) -> @children.push child
+	
+	
+	
+class Block
+	constructor: (@name, @template, @data, @directives) ->
 	
 
 parseNestedSitemap = (map, baseNode) -> 
@@ -28,6 +34,9 @@ parseNestedSitemap = (map, baseNode) ->
 			
 			for node in (parseNestedSitemap value, newNode)
 				l.push node
+		else if (key.charAt 0) == "$"
+			baseNode.addChild (new Block key.substr(1), value.template, value.data, value.directives)
+			
 				
 	l
 	
@@ -35,48 +44,46 @@ parseNestedSitemap = (map, baseNode) ->
 flattenSitemap = (pages) -> 
 	map = {}
 	for page in pages
-		data = {
-			template: page.template,
-			data: page.data,
-			directives: page.directives
-		}
+		data = {}
+		
+		for child in page.children
+			data[child.name] = {
+				template: child.template,
+				data: child.data,
+				directives: child.directives
+			}
 		
 		map[page.url] = data
 		
 	map
+
+console.log "--------------------"
 			
-console.log "-------------------"
 console.log flattenSitemap (parseNestedSitemap {
 	"#/main": {
-		"template": "hi",
-		"data": "maindata",
-		
-		"#/template" : {
-			"template": "dude",
-			"data" : "templatedata",
-			"directives": "dude",
-			
-			"#/we_must_go_deeper": {
-				"template": "deeper",
-				"data": "deepdata",
-				"directives": null
-			}
-		}
-	},
-	
-	"#/anothertree": {
-		"template": "another_template",
-		"#/leaf1": {
-			"#/subleaf": {
-				"data": "subleafdata"
-			},
-			"template": "leaftemplate",
-			"data": "leaf1data"
+		"$navi": {
+			"template": "navitemplate"
 		},
 		
-		"#/leaf2": {
-			"template": "leaftemplate",
-			"data": "leaf2data"
+		"#/sub1": {
+			"$main": {
+				"template": "main1"
+			}
+		},
+
+		"#/sub2": {
+			"$main": {
+				"template": "main2"
+			}
+		},
+
+		"#/sub3": {
+			"$main": {
+				"template": "main3"
+			}
 		}
 	}
 }, new BaseNode)
+
+
+return (sitemap) -> flattenSitemap parseNestedSitemap sitemap, new BaseNode

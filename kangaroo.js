@@ -135,6 +135,7 @@ define(function (){
 				})
 
 				this.loadPageMap(function(pageMap) {
+					pageMap = new PageMap(pageMap)
 					self.pageMap = pageMap
 
 					var url = document.location.hash.substr(1)
@@ -158,10 +159,7 @@ define(function (){
 			this.loadPageMap = function(callback)
 			{
 				var self = this
-				getServices().loadAjax("/static/sitemap.json", function(value) {
-					var pa = new PageMap(getServices().parseJSON(value))
-					callback(pa)
-				})
+				getServices().loadPageMap(callback)
 			}
 
 			this.addBlock = function(object)
@@ -599,6 +597,17 @@ define(function (){
 		}
 		AJAXError.prototype = Error.prototype
 
+		this.loadPageMap = function(callback)
+		{
+			var self = this
+			self.loadAjax("/sitemap.json", function(value) {
+				var pa = self.parseJSON(value)
+				pa = self.preprocessSitemap(pa)
+				console.log(pa)
+				callback(pa)
+			})
+		}
+
 		this.handle404 = function(e, core)
 		{
 			var page = core.pageMap.getPage("/404")
@@ -616,39 +625,69 @@ define(function (){
 		
 		this.preprocessSitemap = function(sitemap)
 		{
+			
+			// This is crap. It's crap because it's compiled with CoffeeScript. It should be implemented in JS.
+			
 			var preprocess = (function() {
-			  var BaseNode, Node, flattenSitemap, parseNestedSitemap;
-
-			  Node = (function() {
-
-			    Node.name = 'Node';
-
-			    function Node(url, template, data, directives) {
-			      this.url = url;
-			      this.template = template;
-			      this.data = data;
-			      this.directives = directives;
-			    }
-
-			    Node.prototype.append = function(other) {
-			      return new Node(this.url + other.url, other.template || (other.template !== null ? this.template : void 0), other.data || (other.data !== null ? this.data : void 0), other.directives || (other.directives !== null ? this.directives : void 0));
-			    };
-
-			    return Node;
-
-			  })();
+			  var BaseNode, Block, Node, flattenSitemap, parseNestedSitemap,
+			    __hasProp = {}.hasOwnProperty,
+			    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor; child.__super__ = parent.prototype; return child; };
 
 			  BaseNode = (function() {
 
 			    BaseNode.name = 'BaseNode';
 
-			    function BaseNode() {}
+			    function BaseNode(children) {
+			      this.children = children != null ? children : [];
+			    }
 
 			    BaseNode.prototype.append = function(other) {
-			      return other;
+			      return new Node(other.url, this.children);
+			    };
+
+			    BaseNode.prototype.addChild = function(child) {
+			      return this.children.push(child);
 			    };
 
 			    return BaseNode;
+
+			  })();
+
+			  Node = (function(_super) {
+
+			    __extends(Node, _super);
+
+			    Node.name = 'Node';
+
+			    function Node(url, children) {
+			      this.url = url;
+			      this.children = children != null ? children : [];
+			    }
+
+			    Node.prototype.append = function(other) {
+			      return new Node(this.url + other.url, this.children.concat(other.children));
+			    };
+
+			    Node.prototype.addChild = function(child) {
+			      return this.children.push(child);
+			    };
+
+			    return Node;
+
+			  })(BaseNode);
+
+			  Block = (function() {
+
+			    Block.name = 'Block';
+
+			    function Block(name, template, data, directives) {
+			      this.name = name;
+			      this.template = template;
+			      this.data = data;
+			      this.directives = directives;
+			    }
+
+			    return Block;
 
 			  })();
 
@@ -669,31 +708,39 @@ define(function (){
 			          node = _ref[_i];
 			          l.push(node);
 			        }
+			      } else if ((key.charAt(0)) === "$") {
+			        baseNode.addChild(new Block(key.substr(1), value.template, value.data, value.directives));
 			      }
 			    }
 			    return l;
 			  };
 
 			  flattenSitemap = function(pages) {
-			    var data, map, page, _i, _len;
+			    var child, data, map, page, _i, _j, _len, _len1, _ref;
 			    map = {};
 			    for (_i = 0, _len = pages.length; _i < _len; _i++) {
 			      page = pages[_i];
-			      data = {
-			        template: page.template,
-			        data: page.data,
-			        directives: page.directives
-			      };
+			      data = {};
+			      _ref = page.children;
+			      for (_j = 0, _len1 = _ref.length; _j < _len1; _j++) {
+			        child = _ref[_j];
+			        data[child.name] = {
+			          template: child.template,
+			          data: child.data,
+			          directives: child.directives
+			        };
+			      }
 			      map[page.url] = data;
 			    }
 			    return map;
 			  };
-				
-				return function(sitemap) {
-					return flattenSitemap(parseNestedSitemap(sitemap, new BaseNode()))
-				}
-				
+
+			  return function(sitemap) {
+			    return flattenSitemap(parseNestedSitemap(sitemap, new BaseNode()));
+			  };
+
 			}).call(this);
+			
 			
 			return preprocess(sitemap)
 		}
