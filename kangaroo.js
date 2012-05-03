@@ -613,6 +613,90 @@ define(function (){
 				}, templateName, directiveName)
 			})
 		}
+		
+		this.preprocessSitemap = function(sitemap)
+		{
+			var preprocess = (function() {
+			  var BaseNode, Node, flattenSitemap, parseNestedSitemap;
+
+			  Node = (function() {
+
+			    Node.name = 'Node';
+
+			    function Node(url, template, data, directives) {
+			      this.url = url;
+			      this.template = template;
+			      this.data = data;
+			      this.directives = directives;
+			    }
+
+			    Node.prototype.append = function(other) {
+			      return new Node(this.url + other.url, other.template || (other.template !== null ? this.template : void 0), other.data || (other.data !== null ? this.data : void 0), other.directives || (other.directives !== null ? this.directives : void 0));
+			    };
+
+			    return Node;
+
+			  })();
+
+			  BaseNode = (function() {
+
+			    BaseNode.name = 'BaseNode';
+
+			    function BaseNode() {}
+
+			    BaseNode.prototype.append = function(other) {
+			      return other;
+			    };
+
+			    return BaseNode;
+
+			  })();
+
+			  parseNestedSitemap = function(map, baseNode) {
+			    var data, directives, key, l, newNode, node, template, url, value, _i, _len, _ref;
+			    l = [];
+			    for (key in map) {
+			      value = map[key];
+			      if ((key.charAt(0)) === "#") {
+			        url = key.substr(1);
+			        template = value.template;
+			        data = value.data;
+			        directives = value.directives;
+			        newNode = baseNode.append(new Node(url, template, data, directives));
+			        l.push(newNode);
+			        _ref = parseNestedSitemap(value, newNode);
+			        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+			          node = _ref[_i];
+			          l.push(node);
+			        }
+			      }
+			    }
+			    return l;
+			  };
+
+			  flattenSitemap = function(pages) {
+			    var data, map, page, _i, _len;
+			    map = {};
+			    for (_i = 0, _len = pages.length; _i < _len; _i++) {
+			      page = pages[_i];
+			      data = {
+			        template: page.template,
+			        data: page.data,
+			        directives: page.directives
+			      };
+			      map[page.url] = data;
+			    }
+			    return map;
+			  };
+				
+				return function(sitemap) {
+					return flattenSitemap(parseNestedSitemap(sitemap, new BaseNode()))
+				}
+				
+			}).call(this);
+			
+			return preprocess(sitemap)
+		}
 
 		this.loadAjax = function(url, callback, error)
 		{
