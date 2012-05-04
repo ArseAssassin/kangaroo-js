@@ -626,7 +626,7 @@ define(function (){
 		this.preprocessSitemap = function(sitemap)
 		{
 			
-			// This is crap. It's crap because it's compiled with CoffeeScript. It should be implemented in JS.
+			// This is hard to read. It's hard to read because it's compiled with CoffeeScript. It should be implemented in JS.
 			
 			var preprocess = (function() {
 			  var BaseNode, Block, Node, flattenSitemap, parseNestedSitemap,
@@ -638,15 +638,41 @@ define(function (){
 			    BaseNode.name = 'BaseNode';
 
 			    function BaseNode(children) {
-			      this.children = children != null ? children : [];
+			      this.children = children != null ? children : {};
 			    }
 
 			    BaseNode.prototype.append = function(other) {
-			      return new Node(other.url, this.children);
+			      return new Node(other.url, this.mergeChildren(other.children));
+			    };
+
+			    BaseNode.prototype.mergeChildren = function(children) {
+			      var child, inherit, name, parent, result, _ref;
+			      result = {};
+			      inherit = function(child, parent, name) {
+			        return child[name] || child[name] !== null && parent[name];
+			      };
+			      for (name in children) {
+			        child = children[name];
+			        parent = this.children[name];
+			        if (parent) {
+			          child = new Block(name, inherit(child, parent, "template"), inherit(child, parent, "data"), inherit(child, parent, "directives"));
+			        }
+			        result[name] = child;
+			      }
+			      _ref = this.children;
+			      for (name in _ref) {
+			        parent = _ref[name];
+			        child = children[name];
+			        if (child) {
+			          parent = new Block(name, inherit(child, parent, "template"), inherit(child, parent, "data"), inherit(child, parent, "directives"));
+			        }
+			        result[name] = parent;
+			      }
+			      return result;
 			    };
 
 			    BaseNode.prototype.addChild = function(child) {
-			      return this.children.push(child);
+			      return this.children[child.name] = child;
 			    };
 
 			    return BaseNode;
@@ -661,15 +687,11 @@ define(function (){
 
 			    function Node(url, children) {
 			      this.url = url;
-			      this.children = children != null ? children : [];
+			      this.children = children != null ? children : {};
 			    }
 
 			    Node.prototype.append = function(other) {
-			      return new Node(this.url + other.url, this.children.concat(other.children));
-			    };
-
-			    Node.prototype.addChild = function(child) {
-			      return this.children.push(child);
+			      return new Node(this.url + other.url, this.mergeChildren(other.children));
 			    };
 
 			    return Node;
@@ -692,16 +714,13 @@ define(function (){
 			  })();
 
 			  parseNestedSitemap = function(map, baseNode) {
-			    var data, directives, key, l, newNode, node, template, url, value, _i, _len, _ref;
+			    var key, l, newNode, node, result, url, value, _i, _j, _len, _len1, _ref;
 			    l = [];
 			    for (key in map) {
 			      value = map[key];
 			      if ((key.charAt(0)) === "#") {
 			        url = key.substr(1);
-			        template = value.template;
-			        data = value.data;
-			        directives = value.directives;
-			        newNode = baseNode.append(new Node(url, template, data, directives));
+			        newNode = new Node(url);
 			        l.push(newNode);
 			        _ref = parseNestedSitemap(value, newNode);
 			        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
@@ -712,18 +731,23 @@ define(function (){
 			        baseNode.addChild(new Block(key.substr(1), value.template, value.data, value.directives));
 			      }
 			    }
-			    return l;
+			    result = [];
+			    for (_j = 0, _len1 = l.length; _j < _len1; _j++) {
+			      node = l[_j];
+			      result.push(baseNode.append(node));
+			    }
+			    return result;
 			  };
 
 			  flattenSitemap = function(pages) {
-			    var child, data, map, page, _i, _j, _len, _len1, _ref;
+			    var child, data, map, name, page, _i, _len, _ref;
 			    map = {};
 			    for (_i = 0, _len = pages.length; _i < _len; _i++) {
 			      page = pages[_i];
 			      data = {};
 			      _ref = page.children;
-			      for (_j = 0, _len1 = _ref.length; _j < _len1; _j++) {
-			        child = _ref[_j];
+			      for (name in _ref) {
+			        child = _ref[name];
 			        data[child.name] = {
 			          template: child.template,
 			          data: child.data,
@@ -736,7 +760,7 @@ define(function (){
 			  };
 
 			  return function(sitemap) {
-			    return flattenSitemap(parseNestedSitemap(sitemap, new BaseNode()));
+			    return flattenSitemap(parseNestedSitemap(sitemap, new BaseNode));
 			  };
 
 			}).call(this);

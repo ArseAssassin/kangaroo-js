@@ -1,16 +1,50 @@
 class BaseNode
-	constructor: (@children=[]) ->
-	append: (other) -> new Node other.url, @children
+	constructor: (@children={}) ->
+	append: (other) -> (new Node other.url, 
+		this.mergeChildren(other.children)
+	)
 	
-	addChild: (child) -> @children.push child
+	mergeChildren: (children) ->
+		result = {}
+		inherit = (child, parent, name) -> child[name] or child[name] != null and parent[name]
+
+		for name, child of children
+			parent = @children[name]
+			
+			if parent
+				child = new Block name, 
+					(inherit child, parent, "template"),
+					(inherit child, parent, "data"),
+					(inherit child, parent, "directives")
+				
+				
+			result[name] = child
+			
+		for name, parent of @children
+			child = children[name]
+			
+			if child
+				parent = new Block(name,
+					inherit(child, parent, "template"),
+					inherit(child, parent, "data"),
+					inherit(child, parent, "directives")
+				)
+				
+			result[name] = parent
+			
+		result
+	
+	addChild: (child) -> 
+		@children[child.name] = child
 	
 	
 class Node extends BaseNode
-	constructor: (@url, @children=[]) ->
+	constructor: (@url, @children={}) ->
 		
-	append: (other) -> (new Node @url + other.url, @children.concat other.children)
-		
-	addChild: (child) -> @children.push child
+	append: (other) -> (new Node @url + other.url, 
+		this.mergeChildren(other.children)
+	)
+	
 	
 	
 	
@@ -23,22 +57,22 @@ parseNestedSitemap = (map, baseNode) ->
 	for key, value of map
 		if (key.charAt 0) == "#"
 			url = key.substr 1
-			template = value.template
-			data = value.data
-			directives = value.directives
-			
-			
-			newNode = baseNode.append (new Node url, template, data, directives)
+			newNode = new Node url
 			
 			l.push newNode
 			
-			for node in (parseNestedSitemap value, newNode)
+			for node in (parseNestedSitemap value, 
+				newNode)
 				l.push node
 		else if (key.charAt 0) == "$"
 			baseNode.addChild (new Block key.substr(1), value.template, value.data, value.directives)
 			
-				
-	l
+		
+	result = []		
+	for node in l
+		result.push baseNode.append(node)
+		
+	return result
 	
 
 flattenSitemap = (pages) -> 
@@ -46,7 +80,7 @@ flattenSitemap = (pages) ->
 	for page in pages
 		data = {}
 		
-		for child in page.children
+		for name, child of page.children
 			data[child.name] = {
 				template: child.template,
 				data: child.data,
@@ -57,33 +91,38 @@ flattenSitemap = (pages) ->
 		
 	map
 
-console.log "--------------------"
-			
-console.log flattenSitemap (parseNestedSitemap {
-	"#/main": {
-		"$navi": {
-			"template": "navitemplate"
-		},
-		
-		"#/sub1": {
-			"$main": {
-				"template": "main1"
-			}
-		},
-
-		"#/sub2": {
-			"$main": {
-				"template": "main2"
-			}
-		},
-
-		"#/sub3": {
-			"$main": {
-				"template": "main3"
-			}
-		}
-	}
-}, new BaseNode)
+# console.log "--------------------"
+# 			
+# console.log flattenSitemap (parseNestedSitemap {
+# 	"#/main": {
+# 		"$navi": {
+# 			"template": "navitemplate",
+# 			"data": "navi"
+# 		},
+# 		
+# 		"#/sub1": {
+# 			"$main": {
+# 				"template": "main1"
+# 			},
+# 			
+# 			"$navi": {
+# 				"data": "hello"
+# 			}
+# 		},
+# 
+# 		"#/sub2": {
+# 			"$main": {
+# 				"template": "main2"
+# 			}
+# 		},
+# 
+# 		"#/sub3": {
+# 			"$main": {
+# 				"template": "main3"
+# 			}
+# 		}
+# 	}
+# }, new BaseNode)
 
 
 return (sitemap) -> flattenSitemap parseNestedSitemap sitemap, new BaseNode
