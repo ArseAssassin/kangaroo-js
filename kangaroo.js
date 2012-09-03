@@ -19,6 +19,13 @@ define(function (){
 	DataError.prototype = Error.prototype
 
 	var kangaroo = (function() {
+		var FileNotFound = function(message, url)
+		{
+			this.message = message
+			this.url = url
+		}
+		FileNotFound.prototype = Error.prototype
+		
 		var PageMap = function(data)
 		{
 			this.data = data
@@ -35,7 +42,7 @@ define(function (){
 					}	
 				}
 
-				throw new Error("Invalid page name " + name)
+				throw new FileNotFound("Invalid page name " + name, path)
 			}
 		}
 
@@ -129,6 +136,7 @@ define(function (){
 				})
 
 				this.loadPageMap(function(pageMap) {
+					pageMap = new PageMap(pageMap)
 					self.pageMap = pageMap
 
 					var url = getServices().getCurrentURLHash()
@@ -144,17 +152,15 @@ define(function (){
 				{
 					var module = this.blocks[i]
 
-					if (!module.object.isActive())
-						module.object.initDefault()
+					// if (!module.object.isActive())
+					// 	module.object.initDefault()
 				}
 			}
 
 			this.loadPageMap = function(callback)
 			{
 				var self = this
-				getServices().loadAjax("sitemap.json", function(value) {
-					callback(new PageMap(getServices().parseJSON(value)))
-				})
+				getServices().loadPageMap(callback)
 			}
 
 			this.addBlock = function(object)
@@ -192,19 +198,42 @@ define(function (){
 
 			this.addPage = function(name)
 			{
-				var page = this.pageMap.getPage(name)
-				this.history.push(page)
+				try {
+					var page = this.pageMap.getPage(name)
+
+					this.history.push(page)
+				} catch(e)
+				{
+					if (e.url)
+						getServices().handle404(e, this)
+					else
+						throw e;
+				}
 			}
 
 			this.getCurrentPage = function()
 			{
-				return this.history[this.history.length-1]
+				if (!this.history.length)
+					return this.pageMap.getPage("/404")
+				else
+					return this.history[this.history.length-1]
 			}
 
 			this.renderCurrent = function()
 			{
 				var page = this.getCurrentPage()
-
+				
+				this.renderPage(page)
+			}
+			
+			this.renderPage = function(page, contextFactory)
+			{
+				if (!contextFactory)
+					function contextFactory(data, template, directives)
+					{
+						return new Context(data, template, directives);
+					}
+					
 				var modules = page.getModules()
 
 				for (var i in modules)
@@ -212,7 +241,7 @@ define(function (){
 					var module = modules[i]
 
 					block = this.getBlock(module.getName())
-					
+
 					var data = module.getDataOrNull();
 					var template = module.getTemplateOrNull();
 					var directives = module.getDirectivesOrNull();
@@ -222,13 +251,31 @@ define(function (){
 						template = block.getDefaultTemplate()
 					if (!directives)
 						directives = block.getDefaultDirectives()
+						
 					
-					block.refresh(new Context(
-						data, template, directives
-					))
+					this.refreshBlock(block, contextFactory(data, template, directives))
 				}
+			}
+			
+			this.refreshBlock = function(block, context)
+			{
+				var self = this;
+				
+				
+				context.loadData(function(data, template, directives, errors) {
+					if (errors.length)
+					{
+						getServices().handle500(errors, self);
+					}
+					else
+					{
+						block.setData(data)
+						block.setTemplate(template)
+						block.setDirectives(directives)
 
-
+						block.render()
+					}
+				})
 			}
 		}
 
@@ -255,7 +302,15 @@ define(function (){
 			this.dataName = data
 			this.templateName = template
 			this.directives = directives
-
+			
+			this.loadData = function(callback)
+			{
+				var context = getServices().getLoader()
+				
+				context.load(this.dataName, this.templateName, this.directives, callback);
+				
+			}
+			
 			this.getDataURL = function()
 			{
 				return this.dataName;
@@ -268,15 +323,13 @@ define(function (){
 
 			this.getDirectiveURL = function()
 			{
-				return this.directives ? this.directives : "";
+				return this.directives;
 			}
 		}
 		
 		var Module = function(root)
 		{
 			this.root = root;
-
-			this.loader = getServices().getLoader();
 
 			this.inited = false
 
@@ -342,28 +395,17 @@ define(function (){
 				return $(this.getRoot()).attr("data-initial-directives")
 			}
 
-			this.initDefault = function()
-			{
-				this.refresh(
-					new Context(
-						this.getDefaultData(),
-						this.getDefaultTemplate(),
-						this.getDefaultDirectives()
-					)
-				)
-			}
-
 			this.render = function()
 			{
 				var self = this;
 
 				$(this.getRoot()).html(this.getTemplate())
+				
 				if (!this.hasDirectives())
 					var t = $(this.getRoot()).autoRender(this.getData())
 				else
 				{
 					var t = $(this.getRoot()).render(this.getData(), this.getDirectives())
-
 				}
 
 				this.setRoot(t)
@@ -373,7 +415,7 @@ define(function (){
 
 			this.getTemplate = function()
 			{
-				if (!this.template)
+				if (this.template == null)
 					throw new Error("No template loaded")
 
 				return this.template;
@@ -396,26 +438,6 @@ define(function (){
 			{
 				this.data = value;
 			}
-
-			this.refresh = function(link)
-			{
-				var self = this;
-
-				self.inited = true
-
-				this.loader.load(
-					link.getDataURL(),
-					link.getTemplateURL(),
-					link.getDirectiveURL(),
-					function(data, template, directives) {
-						self.setData(data)
-						self.setTemplate(template)
-						self.setDirectives(directives)
-
-						self.render()
-					}
-				)
-			}
 		}
 
 		return function(serviceProvider) { // used to inject external services into the scope
@@ -435,20 +457,35 @@ define(function (){
 
 		this.load = function(dataURL, templateURL, directiveURL, callback)
 		{
-			var locks = [
-				"anonymous"
-			]
+			var locks = []
 
 			var template;
 			var data = {};
 			var directives = {};
+			var errors = []
 
+			function handleError(e)
+			{
+				try {
+					errors.push(getServices().parseJSON(e.responseText))
+				} catch(e)
+				{
+					if (e.json)
+						errors.push({
+							"message": "Error parsing JSON"
+						})
+					else
+						throw e
+				}
+				locks.pop()
+				complete()
+			}
 
 			function complete()
 			{
 				if (locks.length == 0)
 				{
-					callback(data, template, directives)
+					callback(data, template, directives, errors)
 				}
 			}
 
@@ -459,17 +496,18 @@ define(function (){
 					data = value
 					locks.pop()
 					complete()
-				})
+				}, handleError)
 
 
 			}
 
+			locks.push("anonymous")
 			this.loadTemplate(templateURL, function(value) {
 				template = value
 
 				locks.pop()
 				complete()
-			})
+			}, handleError)
 
 			if (directiveURL)
 			{
@@ -479,33 +517,73 @@ define(function (){
 
 					locks.pop()
 					complete()
-				})
+				}, handleError)
 			}
 		}
 
-		this.loadTemplate = function(name, callback)
+		this.loadTemplate = function(name, callback, error)
 		{
 			getServices().loadAjax(this.templateEndpoint + name + ".html", function(value) {
 				callback(value)
-			})
+			}, error)
 		}
 
-		this.loadData = function(name, callback)
+		this.loadData = function(name, callback, error)
 		{
 			var self = this
-			getServices().loadAjax(this.dataEndpoint + name + ".json", function(value) {
-				callback(getServices().parseJSON(value))
-			})
+			getServices().loadAjax(this.getDataUrl(name), function(value) {
+				try {
+					callback(getServices().parseJSON(value))
+				} catch (e)
+				{
+					if (e.json)
+						error({"message" : "Can\'t parse JSON response"})
+					else
+						throw e
+				}
+			}, error)
 		}
 
-		this.loadDirective = function(name, callback)
+		this.getDataUrl = function(name) 
+		{
+			return this.dataEndpoint + name + ".json";
+		}
+
+		this.loadDirective = function(name, callback, error)
 		{
 			var self = this
 			getServices().loadAjax(this.directiveEndpoint + name + ".json", function(value) {
-				callback(getServices().parseJSON(value))
-			})
+				try{
+					callback(getServices().parseJSON(value))
+				} catch (e)
+				{
+					if (e.json)
+						error({"message": "Can\'t parse JSON response"})
+					else
+						throw e
+				}
+			}, error)
 		}
 	}
+	
+	var ErrorContext = function(errors, template, directives)
+	{
+		this.errors = errors;
+		this.template = template;
+		this.directives = directives;
+		
+		this.loadData = function(callback)
+		{
+			var context = getServices().getLoader()
+			var self = this
+			
+			context.load("", this.template, this.directives, 
+				function(data, template, directives, errors) {
+					callback(self.errors, template, directives, errors)
+				})
+		}
+	}
+	
 	
 	var Services = function(base)
 	{
@@ -514,14 +592,189 @@ define(function (){
 
 		this.base = base
 
+		
 		var AJAXError = function(jqXHR)
 		{
 			this.jqXHR = jqXHR;
 		}
 		AJAXError.prototype = Error.prototype
 
-		this.loadAjax = function(url, callback)
+		this.loadPageMap = function(callback)
 		{
+			var self = this
+			self.loadAjax("/sitemap.json", function(value) {
+				var pa = self.parseJSON(value)
+				pa = self.preprocessSitemap(pa)
+				console.log(pa)
+				callback(pa)
+			})
+		}
+
+		this.handle404 = function(e, core)
+		{
+			var page = core.pageMap.getPage("/404")
+			core.history.push(page)
+		}
+		
+		this.handle500 = function(e, core)
+		{
+			core.renderPage(core.pageMap.getPage("/500"), function(dataName, templateName, directiveName) {
+				return new ErrorContext({
+					"errors": e
+				}, templateName, directiveName)
+			})
+		}
+		
+		this.preprocessSitemap = function(sitemap)
+		{
+			
+			// This is hard to read. It's hard to read because it's compiled with CoffeeScript. It should be implemented in JS.
+			
+			var preprocess = (function() {
+			  var BaseNode, Block, Node, flattenSitemap, parseNestedSitemap,
+			    __hasProp = {}.hasOwnProperty,
+			    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor; child.__super__ = parent.prototype; return child; };
+
+			  BaseNode = (function() {
+
+			    BaseNode.name = 'BaseNode';
+
+			    function BaseNode(children) {
+			      this.children = children != null ? children : {};
+			    }
+
+			    BaseNode.prototype.append = function(other) {
+			      return new Node(other.url, this.mergeChildren(other.children));
+			    };
+
+			    BaseNode.prototype.mergeChildren = function(children) {
+			      var child, inherit, name, parent, result, _ref;
+			      result = {};
+			      inherit = function(child, parent, name) {
+			        return child[name] || child[name] !== null && parent[name];
+			      };
+			      for (name in children) {
+			        child = children[name];
+			        parent = this.children[name];
+			        if (parent) {
+			          child = new Block(name, inherit(child, parent, "template"), inherit(child, parent, "data"), inherit(child, parent, "directives"));
+			        }
+			        result[name] = child;
+			      }
+			      _ref = this.children;
+			      for (name in _ref) {
+			        parent = _ref[name];
+			        child = children[name];
+			        if (child) {
+			          parent = new Block(name, inherit(child, parent, "template"), inherit(child, parent, "data"), inherit(child, parent, "directives"));
+			        }
+			        result[name] = parent;
+			      }
+			      return result;
+			    };
+
+			    BaseNode.prototype.addChild = function(child) {
+			      return this.children[child.name] = child;
+			    };
+
+			    return BaseNode;
+
+			  })();
+
+			  Node = (function(_super) {
+
+			    __extends(Node, _super);
+
+			    Node.name = 'Node';
+
+			    function Node(url, children) {
+			      this.url = url;
+			      this.children = children != null ? children : {};
+			    }
+
+			    Node.prototype.append = function(other) {
+			      return new Node(this.url + other.url, this.mergeChildren(other.children));
+			    };
+
+			    return Node;
+
+			  })(BaseNode);
+
+			  Block = (function() {
+
+			    Block.name = 'Block';
+
+			    function Block(name, template, data, directives) {
+			      this.name = name;
+			      this.template = template;
+			      this.data = data;
+			      this.directives = directives;
+			    }
+
+			    return Block;
+
+			  })();
+
+			  parseNestedSitemap = function(map, baseNode) {
+			    var key, l, newNode, node, result, url, value, _i, _j, _len, _len1, _ref;
+			    l = [];
+			    for (key in map) {
+			      value = map[key];
+			      if ((key.charAt(0)) === "#") {
+			        url = key.substr(1);
+			        newNode = new Node(url);
+			        l.push(newNode);
+			        _ref = parseNestedSitemap(value, newNode);
+			        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+			          node = _ref[_i];
+			          l.push(node);
+			        }
+			      } else if ((key.charAt(0)) === "$") {
+			        baseNode.addChild(new Block(key.substr(1), value.template, value.data, value.directives));
+			      }
+			    }
+			    result = [];
+			    for (_j = 0, _len1 = l.length; _j < _len1; _j++) {
+			      node = l[_j];
+			      result.push(baseNode.append(node));
+			    }
+			    return result;
+			  };
+
+			  flattenSitemap = function(pages) {
+			    var child, data, map, name, page, _i, _len, _ref;
+			    map = {};
+			    for (_i = 0, _len = pages.length; _i < _len; _i++) {
+			      page = pages[_i];
+			      data = {};
+			      _ref = page.children;
+			      for (name in _ref) {
+			        child = _ref[name];
+			        data[child.name] = {
+			          template: child.template,
+			          data: child.data,
+			          directives: child.directives
+			        };
+			      }
+			      map[page.url] = data;
+			    }
+			    return map;
+			  };
+
+			  return function(sitemap) {
+			    return flattenSitemap(parseNestedSitemap(sitemap, new BaseNode));
+			  };
+
+			}).call(this);
+			
+			
+			return preprocess(sitemap)
+		}
+
+		this.loadAjax = function(url, callback, error)
+		{
+			var self = this;
+			
 			$.ajax({
 				url: url,
 				dataType:"text",
@@ -529,10 +782,7 @@ define(function (){
 				{
 					callback(data);
 				},
-				error: function(jqXHR, textStatus, errorThrown)
-				{
-					throw new AJAXError(jqXHR)
-				}
+				error: error
 			})
 		}
 		
@@ -556,7 +806,7 @@ define(function (){
 				return $.parseJSON(json)
 			} catch (e)
 			{
-				throw new Error("Error parsing JSON: " + json)
+				throw new ParsingError("Error parsing JSON", json)
 			}
 		}
 
@@ -573,6 +823,13 @@ define(function (){
 			return document.location.hash.substr(1) || "/";
 		}
 	}
+	
+	function ParsingError(message, json)
+	{
+		this.message = message
+		this.json = json
+	}
+	ParsingError.prototype = Error.prototype
 	
 	return { 
 		Kangaroo: kangaroo,
