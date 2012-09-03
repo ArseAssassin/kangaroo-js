@@ -119,7 +119,8 @@ define(function (){
 				var self = this;
 
 				$(window).hashchange(function() {
-					self.addPageAndRender(document.location.hash.substr(1))
+					var url = getServices().getCurrentURLHash();
+					self.addPageAndRender(url);
 				})
 
 				$("*[data-elementtype='module']").each(function() {
@@ -130,7 +131,7 @@ define(function (){
 				this.loadPageMap(function(pageMap) {
 					self.pageMap = pageMap
 
-					var url = document.location.hash.substr(1)
+					var url = getServices().getCurrentURLHash()
 
 					self.addPageAndRender(url ? url : "/")
 					self.initDefaultModules()
@@ -182,7 +183,8 @@ define(function (){
 
 			this.addPageAndRender = function(name)
 			{
-				document.location.href = "#" + name
+				if (name != "/" && name != "")
+					document.location.href = "#" + name
 				this.addPage(name)
 
 				this.renderCurrent()
@@ -565,6 +567,10 @@ define(function (){
 
 		this.getLoader = function() {
 			return new LoaderContext("content/data/", "content/template/", "content/directives/");
+		}
+
+		this.getCurrentURLHash = function() {
+			return document.location.hash.substr(1) || "/";
 		}
 	}
 	
