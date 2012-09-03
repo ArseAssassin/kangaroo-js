@@ -605,7 +605,6 @@ define(function (){
 			self.loadAjax("/sitemap.json", function(value) {
 				var pa = self.parseJSON(value)
 				pa = self.preprocessSitemap(pa)
-				console.log(pa)
 				callback(pa)
 			})
 		}
